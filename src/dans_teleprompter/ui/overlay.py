@@ -2,15 +2,14 @@
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QKeyEvent, QMouseEvent
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
-    QSizeGrip,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +28,7 @@ class PrompterOverlay(QMainWindow):
     navigation_requested = Signal(str)
     text_size_requested = Signal(int)
     speed_requested = Signal(int)
+    native_handle_changed = Signal()
 
     def __init__(self, controller: "ApplicationController") -> None:
         super().__init__()
@@ -65,15 +65,14 @@ class PrompterOverlay(QMainWindow):
         self.paused_banner.setAlignment(Qt.AlignCenter)
         self.script_view = ScriptView()
         self.script_view.word_clicked.connect(self.word_clicked)
-        grip = QSizeGrip(self)
+        self.resize_handles = _create_resize_handles(self)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 5, 5)
+        layout.setContentsMargins(7, 7, 7, 7)
         layout.setSpacing(0)
         layout.addWidget(self.header)
         layout.addWidget(self.paused_banner)
         layout.addWidget(self.script_view, 1)
-        layout.addWidget(grip, 0, Qt.AlignRight | Qt.AlignBottom)
         self.container = QWidget()
         self.container.setObjectName("overlayBackground")
         self.container.setLayout(layout)
@@ -85,6 +84,22 @@ class PrompterOverlay(QMainWindow):
         self.paused_banner.setVisible(state.paused and state.script is not None)
         self._apply_styles(state.background_opacity)
         self.script_view.render(self._controller.presentation, state)
+
+    def apply_click_through(self, enabled: bool) -> None:
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowTransparentForInput, enabled)
+        if was_visible:
+            self.show()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        _position_resize_handles(self.resize_handles, self.rect())
+
+    def event(self, event: QEvent) -> bool:
+        result = super().event(event)
+        if event.type() == QEvent.WinIdChange:
+            self.native_handle_changed.emit()
+        return result
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         directions = {
@@ -149,3 +164,47 @@ class PrompterOverlay(QMainWindow):
             #pausedBanner {{ color: #17191d; background: #f2b866; padding: 7px; font: 700 13px 'Segoe UI'; letter-spacing: 3px; }}
             """
         )
+
+
+class _ResizeHandle(QFrame):
+    def __init__(self, parent: QWidget, edges: Qt.Edge, cursor: Qt.CursorShape) -> None:
+        super().__init__(parent)
+        self.edges = edges
+        self.setObjectName("resizeHandle")
+        self.setCursor(cursor)
+        self.setStyleSheet("background: transparent;")
+        self.raise_()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton and self.window().windowHandle() is not None:
+            self.window().windowHandle().startSystemResize(self.edges)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+def _create_resize_handles(parent: QWidget) -> dict[str, _ResizeHandle]:
+    return {
+        "top": _ResizeHandle(parent, Qt.TopEdge, Qt.SizeVerCursor),
+        "bottom": _ResizeHandle(parent, Qt.BottomEdge, Qt.SizeVerCursor),
+        "left": _ResizeHandle(parent, Qt.LeftEdge, Qt.SizeHorCursor),
+        "right": _ResizeHandle(parent, Qt.RightEdge, Qt.SizeHorCursor),
+        "top_left": _ResizeHandle(parent, Qt.TopEdge | Qt.LeftEdge, Qt.SizeFDiagCursor),
+        "top_right": _ResizeHandle(parent, Qt.TopEdge | Qt.RightEdge, Qt.SizeBDiagCursor),
+        "bottom_left": _ResizeHandle(parent, Qt.BottomEdge | Qt.LeftEdge, Qt.SizeBDiagCursor),
+        "bottom_right": _ResizeHandle(parent, Qt.BottomEdge | Qt.RightEdge, Qt.SizeFDiagCursor),
+    }
+
+
+def _position_resize_handles(handles: dict[str, _ResizeHandle], bounds: QRect) -> None:
+    edge, corner = 7, 14
+    handles["top"].setGeometry(corner, 0, max(0, bounds.width() - 2 * corner), edge)
+    handles["bottom"].setGeometry(corner, bounds.height() - edge, max(0, bounds.width() - 2 * corner), edge)
+    handles["left"].setGeometry(0, corner, edge, max(0, bounds.height() - 2 * corner))
+    handles["right"].setGeometry(bounds.width() - edge, corner, edge, max(0, bounds.height() - 2 * corner))
+    handles["top_left"].setGeometry(0, 0, corner, corner)
+    handles["top_right"].setGeometry(bounds.width() - corner, 0, corner, corner)
+    handles["bottom_left"].setGeometry(0, bounds.height() - corner, corner, corner)
+    handles["bottom_right"].setGeometry(bounds.width() - corner, bounds.height() - corner, corner, corner)
+    for handle in handles.values():
+        handle.raise_()

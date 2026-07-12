@@ -6,11 +6,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QGroupBox,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QSlider,
@@ -32,8 +35,8 @@ class ControlWindow(QMainWindow):
         self._controller = controller
         self.setObjectName("controlWindow")
         self.setWindowTitle("Dan's Teleprompter — Controls")
-        self.setMinimumSize(480, 500)
-        self.resize(560, 590)
+        self.setMinimumSize(480, 680)
+        self.resize(560, 760)
 
         title = QLabel("DAN'S TELEPROMPTER")
         title.setObjectName("title")
@@ -53,11 +56,24 @@ class ControlWindow(QMainWindow):
         self.exit_button.setObjectName("exitButton")
         self.exit_button.setToolTip("Gracefully close both windows and stop the application")
         self.exit_button.clicked.connect(self.exit_requested)
+        self.click_through_button = QPushButton("CLICK-THROUGH: OFF")
+        self.click_through_button.setObjectName("safetyButton")
+        self.click_through_button.clicked.connect(controller.toggle_click_through)
+        self.capture_checkbox = QCheckBox("Exclude overlay from supported screen capture")
+        self.capture_checkbox.setObjectName("captureExclusion")
+        self.capture_checkbox.setChecked(False)
+        self.capture_checkbox.toggled.connect(controller.set_capture_exclusion)
 
         self.speed_value = QLabel("130 WPM")
         self.text_value = QLabel("38 PX")
         self.opacity_value = QLabel("88%")
         self.section_value = QLabel("SECTION 1  ·  TAKE 1")
+        self.hotkey_open = QLineEdit(controller.state.hotkey_open_controls)
+        self.hotkey_open.setObjectName("hotkeyOpenControls")
+        self.hotkey_click = QLineEdit(controller.state.hotkey_click_through)
+        self.hotkey_click.setObjectName("hotkeyClickThrough")
+        self.apply_hotkeys_button = QPushButton("APPLY HOTKEYS")
+        self.apply_hotkeys_button.clicked.connect(self._apply_hotkeys)
 
         slower = QPushButton("[")
         faster = QPushButton("]")
@@ -94,6 +110,24 @@ class ControlWindow(QMainWindow):
         tuning.addWidget(self.opacity_value, 2, 1)
         tuning.addWidget(opacity, 2, 2, 1, 2)
 
+        overlay_safety = QGroupBox("WINDOW BEHAVIOR")
+        overlay_safety.setObjectName("safetyGroup")
+        safety_layout = QVBoxLayout(overlay_safety)
+        safety_layout.addWidget(self.click_through_button)
+        safety_layout.addWidget(self.capture_checkbox)
+        capture_note = QLabel("Capture exclusion is off by default and is not a security guarantee.")
+        capture_note.setObjectName("hint")
+        capture_note.setWordWrap(True)
+        safety_layout.addWidget(capture_note)
+
+        hotkeys = QGroupBox("GLOBAL HOTKEYS")
+        hotkey_layout = QGridLayout(hotkeys)
+        hotkey_layout.addWidget(QLabel("Open controls"), 0, 0)
+        hotkey_layout.addWidget(self.hotkey_open, 0, 1)
+        hotkey_layout.addWidget(QLabel("Click-through"), 1, 0)
+        hotkey_layout.addWidget(self.hotkey_click, 1, 1)
+        hotkey_layout.addWidget(self.apply_hotkeys_button, 2, 0, 1, 2)
+
         divider = QFrame()
         divider.setFrameShape(QFrame.HLine)
         layout = QVBoxLayout()
@@ -108,6 +142,8 @@ class ControlWindow(QMainWindow):
         layout.addWidget(self.section_value)
         layout.addSpacing(6)
         layout.addLayout(tuning)
+        layout.addWidget(overlay_safety)
+        layout.addWidget(hotkeys)
         layout.addStretch()
         hint = QLabel("OVERLAY KEYS  ← → WORD  ·  ↑ ↓ PARAGRAPH  ·  + − TEXT  ·  [ ] SPEED")
         hint.setObjectName("hint")
@@ -129,6 +165,20 @@ class ControlWindow(QMainWindow):
         self.opacity_slider.blockSignals(True)
         self.opacity_slider.setValue(state.background_opacity)
         self.opacity_slider.blockSignals(False)
+        self.click_through_button.setText(
+            "CLICK-THROUGH: ON" if state.click_through else "CLICK-THROUGH: OFF"
+        )
+        self.click_through_button.setProperty("active", state.click_through)
+        self.click_through_button.style().unpolish(self.click_through_button)
+        self.click_through_button.style().polish(self.click_through_button)
+        self.capture_checkbox.blockSignals(True)
+        self.capture_checkbox.setChecked(state.capture_exclusion)
+        self.capture_checkbox.setEnabled(state.capture_exclusion_supported)
+        self.capture_checkbox.blockSignals(False)
+        if not self.hotkey_open.hasFocus():
+            self.hotkey_open.setText(state.hotkey_open_controls)
+        if not self.hotkey_click.hasFocus():
+            self.hotkey_click.setText(state.hotkey_click_through)
         section = 0
         if self._controller.presentation is not None:
             section = self._controller.presentation.section_at(state.cursor_word)
@@ -147,6 +197,9 @@ class ControlWindow(QMainWindow):
         if path:
             self._controller.load_script_file(path)
 
+    def _apply_hotkeys(self) -> None:
+        self._controller.update_hotkeys(self.hotkey_open.text(), self.hotkey_click.text())
+
     def _stylesheet(self) -> str:
         return """
             QMainWindow, QWidget { background: #202329; color: #e7e3db; font-family: 'Segoe UI'; }
@@ -157,6 +210,11 @@ class ControlWindow(QMainWindow):
             QPushButton:hover { border-color: #f2b866; color: #f2b866; }
             #primaryButton { background: #f2b866; color: #1a1c20; border: 0; }
             #transportButton { background: #343a43; }
+            #safetyButton[active="true"] { color: #17191d; background: #f2b866; border-color: #f2b866; }
+            QGroupBox { border: 1px solid #3a4049; margin-top: 12px; padding: 12px 8px 8px; color: #8f97a2; font-weight: 600; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+            QLineEdit { color: #e7e3db; background: #17191d; border: 1px solid #454b55; padding: 7px; selection-background-color: #f2b866; }
+            QCheckBox { color: #c7cbd1; spacing: 8px; }
             #exitButton { color: #b8bec6; background: transparent; border-color: #4b5059; }
             #exitButton:hover { color: #ff8a78; border-color: #ff8a78; }
             QSlider::groove:horizontal { height: 4px; background: #414751; }
