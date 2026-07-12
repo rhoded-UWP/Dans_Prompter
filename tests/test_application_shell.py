@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 
 from PySide6.QtCore import QSettings
+from PySide6.QtTest import QSignalSpy
 
 from dans_teleprompter.controller.application import ApplicationController
 from dans_teleprompter.ui.geometry import WindowGeometryStore
@@ -82,3 +83,27 @@ def test_geometry_is_stored_independently(qapp, qtbot, tmp_path, monkeypatch) ->
 
     settings = controller.geometry_store._settings
     assert settings.value("windows/controls/geometry") != settings.value("windows/overlay/geometry")
+
+
+def test_overlay_exit_button_requests_application_exit(qapp, qtbot, tmp_path, monkeypatch) -> None:
+    controller = _controller(qapp, tmp_path, monkeypatch)
+    qtbot.addWidget(controller.control_window)
+    qtbot.addWidget(controller.overlay)
+    spy = QSignalSpy(controller.overlay.exit_requested)
+
+    controller.overlay.exit_button.click()
+
+    assert spy.count() == 1
+
+
+def test_control_window_exit_button_requests_application_exit(
+    qapp, qtbot, tmp_path, monkeypatch
+) -> None:
+    controller = _controller(qapp, tmp_path, monkeypatch)
+    qtbot.addWidget(controller.control_window)
+    qtbot.addWidget(controller.overlay)
+    spy = QSignalSpy(controller.control_window.exit_requested)
+
+    controller.control_window.exit_button.click()
+
+    assert spy.count() == 1
